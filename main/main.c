@@ -21,6 +21,7 @@
 #include <driver/dac_oneshot.h>
 #include <esp_timer.h>
 #include <freertos/task.h>
+#include <math.h>
 
 // DEFINE CONSTANTS HERE THAT WILL BE USED THROUGHOUT THE PROGRAM LOGIC CODE
 
@@ -82,15 +83,34 @@ static const i2c_device_config_t mpu6050_config = {
 };
 static i2c_master_dev_handle_t mpu6050_handle;
 
+
+//OFFSETS for sensor readings
+
+static const float fOffsetAccelX = 0.06646f;
+static const float fOffsetAccelY = 0.01325f;
+static const float fOffsetAccelZ = 0.18885f;
+
+static const float fOffsetGyroX = 0.0f;
+static const float fOffsetGyroY = 0.0f;
+static const float fOffsetGyroZ = 0.0f;
+
+
 static const uint8_t mpu6050_pmc_reg[2] = {0x6B, 0x00};               // set to continuous mode
 static const uint8_t mpu6050_gyro_scale_factor_reg[2] = {0x1B, 0x08}; // 65.5 Mode
 static const uint8_t mpu6050_acce_scale_factor_reg[2] = {0x1C, 0x10};
 static const uint8_t mpu6050_gyro_control_reg[1] = {0x43};
+static const uint8_t mpu6050_acce_control_reg[1] = {0x3B};
+
 static float fRoll = 0.0f, fPitch = 0.0f, fYaw = 0.0f;
 static int16_t sdRoll, sdPitch, sdYaw;
 static uint8_t gyro_results_buffer[6];
-// static char cpAngleString[10]; // xxx\n\0
 
+static uint8_t accel_results_buffer[6];
+static float fAccelX, fAccelY, fAccelZ;
+static int16_t sdAccelX, sdAccelY, sdAccelZ;
+static float fAccelGravityVector;
+static float fAccelPitch, fAccelRoll;
+static const float RAD_TO_PI = 180.0f / 3.14159f;
 
 
 
@@ -137,20 +157,41 @@ void IRAM_ATTR flight_controller_loop(void *pvParameters)
         DBG_DAC_CYCLE_TIME = esp_timer_get_time() + SRR_CYCLE_WIDTH_MICRO;
 
         //Receive gyro data
-        i2c_master_transmit_receive(mpu6050_handle, mpu6050_gyro_control_reg, 1, gyro_results_buffer, 6, -1);
+        i2c_master_transmit_receive(mpu6050_handle, mpu6050_gyro_control_reg, 1, gyro_results_buffer, 6, 1000);
+        i2c_master_transmit_receive(mpu6050_handle, mpu6050_acce_control_reg, 1, accel_results_buffer, 6, 1000);
         sdPitch  =    gyro_results_buffer[2] << 8 | gyro_results_buffer[3]; // Y
         sdRoll =    gyro_results_buffer[0] << 8 | gyro_results_buffer[1]; // X
         sdYaw   =    gyro_results_buffer[4] << 8 | gyro_results_buffer[5]; // Z
 
-        fRoll += (sdRoll * RCF);
-        fPitch += (sdPitch * RCF);
-        fYaw += (sdYaw * RCF);
+        sdAccelX =  accel_results_buffer[0] << 8 | gyro_results_buffer[1];
+        sdAccelY =  accel_results_buffer[2] << 8 | gyro_results_buffer[3];
+        sdAccelZ =  accel_results_buffer[4] << 8 | gyro_results_buffer[5];
 
-        // // snprintf(cpAngleString, 5, "%.0f\n", fRoll);
-        // snprintf(cpAngleString, 8, "%d\n", sdRoll);
+        fAccelX = sdAccelX / 4096.0f - fOffsetAccelX;
+        fAccelY = sdAccelY / 4096.0f - fOffsetAccelY;
+        fAccelZ = sdAccelZ / 4096.0f - fOffsetAccelZ;
 
-        // debug_print((const char *)cpAngleString, 5);
-        printf("Roll%0.fPitch%0.fYaw%0.f\n", fRoll, fPitch, fYaw);
+        fAccelGravityVector = sqrt(
+            fAccelX*fAccelX
+            +
+            fAccelY*fAccelZ
+            +
+            fAccelZ*fAccelZ
+        );
+
+        fAccelPitch = asin(fAccelX/fAccelGravityVector) * RAD_TO_PI;
+        fAccelRoll = asin(fAccelY/fAccelGravityVector) * RAD_TO_PI;
+
+
+        fRoll += ((sdRoll - fOffsetGyroX) * RCF);
+        fPitch += ((sdPitch - fOffsetGyroY) * RCF);
+        fYaw += ((sdYaw - fOffsetGyroZ) * RCF);
+
+        // printf("Roll%0.fPitch%0.fYaw%0.f\n", fRoll, fPitch, fYaw);
+        // printf("GravityVec%0.4f\n", fAccelGravityVector);
+        // printf("AccelX%0.2fAccelY%0.2fAccelZ%0.2f\n", fAccelX, fAccelY, fAccelZ);
+        printf("Roll%0.2fPitch%0.2fAccelZ%0.2f\n", fAccelRoll, fAccelPitch, fAccelZ);
+
 
 
 
