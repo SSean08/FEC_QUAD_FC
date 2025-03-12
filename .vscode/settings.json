@@ -6,9 +6,13 @@
         "interface/ftdi/esp32_devkitj_v1.cfg",
         "target/esp32.cfg"
     ],
-    "idf.port": "/dev/ttyS0",
+    "idf.port": "/dev/ttyUSB0",
     "idf.toolsPath": "/home/sean/.espressif",
     "idf.customExtraVars": {
         "IDF_TARGET": "esp32"
-    }
+    },
+    "files.associations": {
+        "task.h": "c"
+    },
+    "idf.flashType": "UART"
 }

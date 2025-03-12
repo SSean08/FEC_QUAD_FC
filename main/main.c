@@ -1,6 +1,191 @@
+/*
+
+
+
+    ERROR CODE REFERENCE:
+    1000:   CANNOT INITIALIZE I2C MASTER BUS
+    1001:   CANNOT INITIALIZE I2C MPU6050 DEVICE
+    1002:   CANNOT SET MPU6050 CONTINUOUS MODE THROUGH INTERNAL REGISTERS
+    1003:   CANNOT SET MPU6050 GYROSCOPE SCALE FACTOR THROUGH INTERNAL REGISTERS
+    1004:   CANNOT SET MPU6050 ACCELEROMETER SCALE FACTOR THROUGH INTERNAL REGISTERS
+*/
+
 #include <stdio.h>
+
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <driver/i2c_master.h>
+#include <driver/uart.h>
+
+
+
+
+
+
+
+
+
+// DEFINE CONSTANTS HERE THAT WILL BE USED THROUGHOUT THE PROGRAM LOGIC CODE
+
+//debug constants and structures
+static const char * BOOT_MSG = "ARCHIE\n\0";
+static const size_t BOOT_MSG_LEN = 8;
+
+static const uart_port_t uart_debug_port = UART_NUM_0;
+static const uart_config_t uart_debug_config = {
+    .baud_rate = 115200,
+    .data_bits = UART_DATA_8_BITS,
+    .parity = UART_PARITY_DISABLE,
+    .stop_bits = UART_STOP_BITS_1,
+    .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    .source_clk = UART_SCLK_DEFAULT
+};
+static const int uart_debug_buffer_size = (1024 * 2);
+static QueueHandle_t uart_queue_handle;
+
+
+
+
+
+//Quadcopter system refresh rate
+#define SYSTEM_REFRESH_RATE (250)                    // 250Hz
+#define SRR_CYCLE_WIDTH (1000 / SYSTEM_REFRESH_RATE) // 1000ms / refresh rate, milliseconds
+
+
+//
+
+
+
+// I2C master device constants and structures
+#define SCL_GPIO (22)
+#define SDATA_GPIO (21)
+#define MASTER_FREQUENCY (400000)
+#define ESP_I2C_PORT (0)
+
+static const i2c_master_bus_config_t mcu_master_device_config = {
+    .clk_source = I2C_CLK_SRC_APB,
+    .i2c_port = ESP_I2C_PORT,
+    .scl_io_num = SCL_GPIO,
+    .sda_io_num = SDATA_GPIO,
+    .glitch_ignore_cnt = 7, // default
+    // .flags.enable_internal_pullup = true
+};
+static i2c_master_bus_handle_t mcu_master_device_handle;
+
+
+
+
+
+
+// MPU6050-related constants and structures
+// static const float RCF = 4 / 65.5f * 1 / 1000.0f;
+static const i2c_device_config_t mpu6050_config = {
+    .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+    .device_address = 0x68,
+    .scl_speed_hz = 200000,
+    // .scl_wait_us = 0xFFFFF
+};
+static i2c_master_dev_handle_t mpu6050_handle;
+
+static uint8_t mpu6050_pmc_reg[2] = {0x6B, 0x00}; // set to continuous mode
+static uint8_t mpu6050_gyro_scale_factor_reg[2] = {0x1B, 0x08}; // 65.5 Mode
+static uint8_t mpu6050_acce_scale_factor_reg[2] = {0x1C, 0x10};
+
+
+
+
+//UART DEBUGGING constants and structures
+static uart_port_t uart_debugging_port = UART_NUM_0; // directs to standard output
+
+
+
+void IRAM_ATTR debug_print(const char * string, size_t len)
+{
+    if (uart_write_bytes(uart_debugging_port, (const void *) string, len) < 0) {
+        printf("error outputting values to uart port, probably 0, see source code\n");
+    }
+}
+
+
+void IRAM_ATTR flight_controller_loop(void *pvParameters)
+{
+    /*
+    this will be used as the main program loop for the flight controller, it will contain all the logic code
+    of the flight controller. This always run at 250Hz.
+    */
+
+
+    //MPU6050 Gyro and Accelerometer angles
+
+
+}
 
 void app_main(void)
 {
+    /*
+    this will be used as the setup function which will setup all required resources and peripherals for the
+    flight controller
+    */
+
+    //debug peripherals initialization
+    if (uart_param_config(uart_debug_port, &uart_debug_config) != ESP_OK) {
+        printf("Cannot initialize debugging UART device\n");
+    }
+
+    if (uart_driver_install(uart_debug_port, uart_debug_buffer_size, uart_debug_buffer_size, 10, &uart_queue_handle, 0) != ESP_OK) {
+        printf("Cannot initialize UART driver for debugging\n");
+    }
+
+    //print boot message
+    debug_print(BOOT_MSG, BOOT_MSG_LEN);
+
+
+    //Initialize sensors
+    if (i2c_new_master_bus(&mcu_master_device_config, &mcu_master_device_handle) != ESP_OK) {
+        //set debugging LEDS
+        char * msg = "1000\n\0"; 
+        debug_print(msg, 6);
+    }
+
+    if (i2c_master_bus_add_device(mcu_master_device_handle, &mpu6050_config, &mpu6050_handle) != ESP_OK) {
+        //set debugging LEDS
+        char * msg = "1001\n\0"; 
+        debug_print(msg, 6);
+    }
+
+
+
+    //Initialize mpu6050 sensor internal register configs
+    if (i2c_master_transmit(mpu6050_handle, mpu6050_pmc_reg, 2, pdMS_TO_TICKS(100))) {
+        //wait for 100MS
+        char * msg = "1002\n\0";
+        debug_print(msg, 6);
+    }
+
+    if (i2c_master_transmit(mpu6050_handle, mpu6050_gyro_scale_factor_reg, 2, pdMS_TO_TICKS(100))) {
+        //wait for 100MS
+        char * msg = "1003\n\0";
+        debug_print(msg, 6);
+    }
+
+    if (i2c_master_transmit(mpu6050_handle, mpu6050_acce_scale_factor_reg, 2, pdMS_TO_TICKS(100))) {
+        //wait for 100MS
+        char * msg = "1004\n\0";
+        debug_print(msg, 6);
+    }
+
+
+
+
+
+
+    
+
+
+
+
+
+
+
 
 }
