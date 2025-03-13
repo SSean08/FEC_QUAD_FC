@@ -171,26 +171,18 @@ void IRAM_ATTR flight_controller_loop(void *pvParameters)
         fAccelY = sdAccelY / 4096.0f - fOffsetAccelY;
         fAccelZ = sdAccelZ / 4096.0f - fOffsetAccelZ;
 
-        fAccelGravityVector = sqrt(
-            fAccelX*fAccelX
-            +
-            fAccelY*fAccelZ
-            +
-            fAccelZ*fAccelZ
-        );
-
-        fAccelPitch = asin(fAccelX/fAccelGravityVector) * RAD_TO_PI;
-        fAccelRoll = asin(fAccelY/fAccelGravityVector) * RAD_TO_PI;
+        fAccelPitch = atan(-fAccelX/(sqrt(fAccelY*fAccelY + fAccelZ*fAccelZ))) * RAD_TO_PI;
+        fAccelRoll = atan(fAccelY/(sqrt(fAccelX*fAccelX + fAccelZ*fAccelZ))) * RAD_TO_PI;
 
 
         fRoll += ((sdRoll - fOffsetGyroX) * RCF);
         fPitch += ((sdPitch - fOffsetGyroY) * RCF);
         fYaw += ((sdYaw - fOffsetGyroZ) * RCF);
 
-        // printf("Roll%0.fPitch%0.fYaw%0.f\n", fRoll, fPitch, fYaw);
+        printf("Roll%0.fPitch%0.fYaw%0.f\n", fRoll, fPitch, fYaw);
         // printf("GravityVec%0.4f\n", fAccelGravityVector);
         // printf("AccelX%0.2fAccelY%0.2fAccelZ%0.2f\n", fAccelX, fAccelY, fAccelZ);
-        printf("Roll%0.2fPitch%0.2fAccelZ%0.2f\n", fAccelRoll, fAccelPitch, fAccelZ);
+        printf("Roll%0.fPitch%0.fAccelZ%0.f\n", fAccelRoll, fAccelPitch, fAccelZ);
 
 
 
