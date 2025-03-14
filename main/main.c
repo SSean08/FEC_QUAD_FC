@@ -52,10 +52,10 @@ static const dac_oneshot_config_t debug_dac_config = {
 static uint64_t DBG_DAC_CYCLE_TIME;
 
 // Quadcopter system refresh rate
-#define SYSTEM_REFRESH_RATE (250)                    // 250Hz
-#define SRR_CYCLE_WIDTH (1000 / SYSTEM_REFRESH_RATE) // 1000ms / refresh rate, milliseconds
-#define SRR_CYCLE_WIDTH_MICRO (SRR_CYCLE_WIDTH * 1000)
-#define SRR_CYCLE_WIDTH_SECONDS (SRR_CYCLE_WIDTH / 1000)
+static const uint32_t SYSTEM_REFRESH_RATE = (250);                    // 250Hz
+static const uint32_t SRR_CYCLE_WIDTH = (1000 / SYSTEM_REFRESH_RATE); // 1000ms / refresh rate, milliseconds
+static const uint32_t SRR_CYCLE_WIDTH_MICRO = (SRR_CYCLE_WIDTH * 1000);
+static const float SRR_CYCLE_WIDTH_SECONDS = (SRR_CYCLE_WIDTH / 1000.0f);
 
 //
 
@@ -91,9 +91,9 @@ static const float fOffsetAccelX = 0.06646f;
 static const float fOffsetAccelY = 0.01325f;
 static const float fOffsetAccelZ = 0.18885f;
 
-static const float fOffsetRoll =     0.16798f; //0.16798f;
-static const float fOffsetPitch =    0.82442f; //0.82442f
-static const float fOffsetYaw =      0.58017f;
+static const float fOffsetRoll = 0.16798f;  // 0.16798f;
+static const float fOffsetPitch = 0.82442f; // 0.82442f
+static const float fOffsetYaw = 0.58017f;
 
 static const uint8_t mpu6050_pmc_reg[2] = {0x6B, 0x00};               // set to continuous mode
 static const uint8_t mpu6050_gyro_scale_factor_reg[2] = {0x1B, 0x08}; // 65.5 Mode
@@ -129,27 +129,27 @@ static uart_port_t uart_debugging_port = UART_NUM_0; // directs to standard outp
 // FUNCTIONS AND TASKS
 
 /// @brief The kalman calculation algorithm for the angles combining gyro and accelerometer calculations.
-/// @param afKalmanOutput       [out] The array (should be of length 2) that will contain the kalman algorithm calculation. First element = Kalman Angle, Second element = Kalman Angle Uncertainty.
+/// @param fpKalmanOutput       [out] The array (should be of length 2) that will contain the kalman algorithm calculation. First element = Kalman Angle, Second element = Kalman Angle Uncertainty.
 /// @param fKalmanState         [in]  Kalman Angle.
 /// @param fKalmanUncertainty   [in]  Kalman Uncertainty.
 /// @param fKalmanInput         [in]  Rate of Gyro at the current iteration.
 /// @param fKalmanMeasurement   [in]  Accelerometer measurement at the current iteration.
 /// @return void
-void IRAM_ATTR kalman_1d_mpu6050(float fKalmanState, float fKalmanUncertainty, float fKalmanInput, float fKalmanMeasurement)
+void IRAM_ATTR kalman_1d_mpu6050(float *fpKalmanOutput, float fKalmanState, float fKalmanUncertainty, float fKalmanInput, float fKalmanMeasurement)
 {
 
     fKalmanState = fKalmanState + (SRR_CYCLE_WIDTH_SECONDS * fKalmanInput);
 
-    fKalmanUncertainty = fKalmanUncertainty + (SRR_CYCLE_WIDTH_SECONDS * SRR_CYCLE_WIDTH_SECONDS * fKalmanRotationRateVariance);
+    fKalmanUncertainty = fKalmanUncertainty + (SRR_CYCLE_WIDTH * SRR_CYCLE_WIDTH * fKalmanRotationRateVariance);
 
-    float fKalmanGain = fKalmanUncertainty / ( fKalmanUncertainty + fKalmanAccelerometerVariance);
+    float fKalmanGain = fKalmanUncertainty / (fKalmanUncertainty + fKalmanAccelerometerVariance);
 
     fKalmanState = fKalmanState + fKalmanGain * (fKalmanMeasurement - fKalmanState);
 
     fKalmanUncertainty = (1 - fKalmanGain) * fKalmanUncertainty;
 
-    afKalmanOutput[0] = fKalmanState;
-    afKalmanOutput[1] = fKalmanUncertainty;
+    fpKalmanOutput[0] = fKalmanState;
+    fpKalmanOutput[1] = fKalmanUncertainty;
 }
 
 void IRAM_ATTR debug_print(const char *string, size_t len)
@@ -198,7 +198,6 @@ void IRAM_ATTR flight_controller_loop(void *pvParameters)
         fAccelRoll = atan(fAccelY / (sqrt(fAccelX * fAccelX + fAccelZ * fAccelZ))) * RAD_TO_DEG;
         fAccelPitch = -atan(fAccelX / (sqrt(fAccelY * fAccelY + fAccelZ * fAccelZ))) * RAD_TO_DEG;
 
-
         // Get angle through gyro and add them (integration);
         // RCF constant contains conversion to velocity (i.e. gyro reading at axis / 65.5 = velocity at axis)
 
@@ -217,17 +216,17 @@ void IRAM_ATTR flight_controller_loop(void *pvParameters)
         // Kalman Filter combining Accelerometer with Gyroscope
 
         // Roll
-        kalman_1d_mpu6050(fKalmanAngleRoll, fKalmanRollAngleUncertainty, ((float)sdRoll / 65.5f) - fOffsetRoll, fAccelRoll);
+        kalman_1d_mpu6050(afKalmanOutput, fKalmanAngleRoll, fKalmanRollAngleUncertainty, ((float)sdRoll / 65.5f) - fOffsetRoll, fAccelRoll);
         fKalmanAngleRoll = afKalmanOutput[0];
         fKalmanRollAngleUncertainty = afKalmanOutput[1];
 
         // Pitch
-        kalman_1d_mpu6050(fKalmanAnglePitch, fKalmanPitchAngleUncertainty, ((float)sdPitch / 65.5f) - fOffsetPitch, fAccelPitch);
+        kalman_1d_mpu6050(afKalmanOutput, fKalmanAnglePitch, fKalmanPitchAngleUncertainty, ((float)sdPitch / 65.5f) - fOffsetPitch, fAccelPitch);
         fKalmanAnglePitch = afKalmanOutput[0];
         fKalmanPitchAngleUncertainty = afKalmanOutput[1];
 
-        // printf("Roll Rate\t%5.5f\n", sdRoll/65.5f - fOffsetRoll);
-        // printf("Pitch Rate\t%5.5f\n", sdPitch/65.5f - fOffsetPitch);
+        // printf("Roll Rate\t%5.5f\n", ((float)sdRoll / 65.5f) - fOffsetRoll);
+        // printf("Pitch Rate\t%5.5f\n", ((float)sdPitch / 65.5f) - fOffsetPitch);
 
         printf("Roll Angle\t%3.2f\n", fKalmanAngleRoll);
         printf("Pitch Angle\t%3.2f\n", fKalmanAnglePitch);
@@ -235,7 +234,8 @@ void IRAM_ATTR flight_controller_loop(void *pvParameters)
         // Set GPIO voltage to 0v, use this to check SRR of quadcopter.
         dac_oneshot_output_voltage(debug_dac_handle, 0); // should always be last
         // Busy loop to achieve system refresh rate
-        while (esp_timer_get_time() < DBG_DAC_CYCLE_TIME);
+        while (esp_timer_get_time() < DBG_DAC_CYCLE_TIME)
+            ;
     }
 }
 
