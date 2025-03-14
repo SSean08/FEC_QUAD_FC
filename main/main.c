@@ -16,12 +16,14 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <driver/i2c_master.h>
+// #include <driver/i2c_master.h>
+#include <driver/i2c.h>
 #include <driver/uart.h>
 #include <driver/dac_oneshot.h>
 #include <esp_timer.h>
 #include <freertos/task.h>
 #include <math.h>
+#include "mpu6050.h"
 
 // DEFINE CONSTANTS HERE THAT WILL BE USED THROUGHOUT THE PROGRAM LOGIC CODE
 
@@ -63,71 +65,71 @@ static uint64_t DBG_DAC_CYCLE_TIME;
 #define MASTER_FREQUENCY (400000)
 #define ESP_I2C_PORT (0)
 
-static const i2c_master_bus_config_t mcu_master_device_config = {
-    .clk_source = I2C_CLK_SRC_APB,
-    .i2c_port = ESP_I2C_PORT,
-    .scl_io_num = SCL_GPIO,
-    .sda_io_num = SDATA_GPIO,
-    .glitch_ignore_cnt = 7, // default
-    // .flags.enable_internal_pullup = true
+static const i2c_config_t i2c_master_bus_config = {
+    .mode = I2C_MODE_MASTER,
+    .sda_io_num = SDATA_GPIO, // select SDA GPIO specific to your project
+    .sda_pullup_en = GPIO_PULLUP_DISABLE,
+    .scl_io_num = SCL_GPIO, // select SCL GPIO specific to your project
+    .scl_pullup_en = GPIO_PULLUP_DISABLE,
+    .master.clk_speed = MASTER_FREQUENCY, // select frequency specific to your project
+    .clk_flags = 0,                         // optional; you can use I2C_SCLK_SRC_FLAG_* flags to choose i2c source clock here
 };
-static i2c_master_bus_handle_t mcu_master_device_handle;
+static const int i2c_master_bus_port = 0;
 
 // MPU6050-related constants and structures
-static const float RCF = 4 / 65.5f * 1 / 1000.0f;
-static const i2c_device_config_t mpu6050_config = {
-    .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-    .device_address = 0x68,
-    .scl_speed_hz = 400000,
-    // .scl_wait_us = 0xFFFFF
-};
-static i2c_master_dev_handle_t mpu6050_handle;
+// static const float RCF = 4 / 65.5f * 1 / 1000.0f;
 
+// ESPRESSIF MPU6050 driver
+static mpu6050_handle_t mpu6050_espressif_handle = NULL;
+static mpu6050_acce_value_t acce;
+static mpu6050_gyro_value_t gyro;
+static complimentary_angle_t complimentary_angle;
 
-//OFFSETS for sensor readings
+// OFFSETS for sensor readings
 
-static const float fOffsetAccelX = 0.06646f;
-static const float fOffsetAccelY = 0.01325f;
-static const float fOffsetAccelZ = 0.18885f;
+// static const float fOffsetAccelX = 0.06646f;
+// static const float fOffsetAccelY = 0.01325f;
+// static const float fOffsetAccelZ = 0.18885f;
 
-static const float fOffsetGyroX = 0.0f;
-static const float fOffsetGyroY = 0.0f;
-static const float fOffsetGyroZ = 0.0f;
+// static const float fOffsetRoll =     0.16798f; //0.16798f;
+// static const float fOffsetPitch =    0.82442f; //0.82442f
+// static const float fOffsetYaw =      0.58017f;
 
+// static const uint8_t mpu6050_pmc_reg[2] = {0x6B, 0x00};               // set to continuous mode
+// static const uint8_t mpu6050_gyro_scale_factor_reg[2] = {0x1B, 0x08}; // 65.5 Mode
+// static const uint8_t mpu6050_acce_scale_factor_reg[2] = {0x1C, 0x10};
+// static const uint8_t mpu6050_gyro_control_reg[1] = {0x43};
+// static const uint8_t mpu6050_acce_control_reg[1] = {0x3B};
 
-static const uint8_t mpu6050_pmc_reg[2] = {0x6B, 0x00};               // set to continuous mode
-static const uint8_t mpu6050_gyro_scale_factor_reg[2] = {0x1B, 0x08}; // 65.5 Mode
-static const uint8_t mpu6050_acce_scale_factor_reg[2] = {0x1C, 0x10};
-static const uint8_t mpu6050_gyro_control_reg[1] = {0x43};
-static const uint8_t mpu6050_acce_control_reg[1] = {0x3B};
+// static float fRoll = 0.0f, fPitch = 0.0f, fYaw = 0.0f;
+// static int16_t sdRoll, sdPitch, sdYaw;
+// static uint8_t gyro_results_buffer[6];
 
-static float fRoll = 0.0f, fPitch = 0.0f, fYaw = 0.0f;
-static int16_t sdRoll, sdPitch, sdYaw;
-static uint8_t gyro_results_buffer[6];
-
-static uint8_t accel_results_buffer[6];
-static float fAccelX, fAccelY, fAccelZ;
-static int16_t sdAccelX, sdAccelY, sdAccelZ;
-static float fAccelGravityVector;
-static float fAccelPitch, fAccelRoll;
-static const float RAD_TO_PI = 180.0f / 3.14159f;
-
-
+// static uint8_t accel_results_buffer[6];
+// static float fAccelX, fAccelY, fAccelZ;
+// static int16_t sdAccelX, sdAccelY, sdAccelZ;
+// static float fAccelGravityVector;
+// static float fAccelPitch, fAccelRoll;
+// static const float RAD_TO_PI = 180.0f / 3.14159f;
 
 // UART DEBUGGING constants and structures
 static uart_port_t uart_debugging_port = UART_NUM_0; // directs to standard output
 
+// FUNCTIONS AND TASKS
 
+static void IRAM_ATTR mpu6050_init()
+{
+    mpu6050_espressif_handle = mpu6050_create(0, MPU6050_I2C_ADDRESS);
+    mpu6050_config(mpu6050_espressif_handle, ACCE_FS_4G, GYRO_FS_500DPS);
+    mpu6050_wake_up(mpu6050_espressif_handle);
+}
 
-
-
-
-
-
-
-
-
-//FUNCTIONS AND TASKS
+static void IRAM_ATTR mpu6050_read(void *pvParameters)
+{
+    mpu6050_get_acce(mpu6050_espressif_handle, &acce);
+    mpu6050_get_gyro(mpu6050_espressif_handle, &gyro);
+    mpu6050_complimentory_filter(mpu6050_espressif_handle, &acce, &gyro, &complimentary_angle);
+}
 
 void IRAM_ATTR debug_print(const char *string, size_t len)
 {
@@ -136,12 +138,6 @@ void IRAM_ATTR debug_print(const char *string, size_t len)
         printf("error outputting values to uart port, probably 0, see source code\n");
     }
 }
-
-
-
-
-
-
 
 void IRAM_ATTR flight_controller_loop(void *pvParameters)
 {
@@ -153,65 +149,18 @@ void IRAM_ATTR flight_controller_loop(void *pvParameters)
     {
         dac_oneshot_output_voltage(debug_dac_handle, 255);
 
-        //set 4MS delay to match 250Hz
+        // set 4MS delay to match 250Hz
         DBG_DAC_CYCLE_TIME = esp_timer_get_time() + SRR_CYCLE_WIDTH_MICRO;
-
-        //Receive gyro data
-        i2c_master_transmit_receive(mpu6050_handle, mpu6050_gyro_control_reg, 1, gyro_results_buffer, 6, 1000);
-        i2c_master_transmit_receive(mpu6050_handle, mpu6050_acce_control_reg, 1, accel_results_buffer, 6, 1000);
-        sdPitch  =    gyro_results_buffer[2] << 8 | gyro_results_buffer[3]; // Y
-        sdRoll =    gyro_results_buffer[0] << 8 | gyro_results_buffer[1]; // X
-        sdYaw   =    gyro_results_buffer[4] << 8 | gyro_results_buffer[5]; // Z
-
-        sdAccelX =  accel_results_buffer[0] << 8 | gyro_results_buffer[1];
-        sdAccelY =  accel_results_buffer[2] << 8 | gyro_results_buffer[3];
-        sdAccelZ =  accel_results_buffer[4] << 8 | gyro_results_buffer[5];
-
-        fAccelX = sdAccelX / 4096.0f - fOffsetAccelX;
-        fAccelY = sdAccelY / 4096.0f - fOffsetAccelY;
-        fAccelZ = sdAccelZ / 4096.0f - fOffsetAccelZ;
-
-        fAccelPitch = atan(-fAccelX/(sqrt(fAccelY*fAccelY + fAccelZ*fAccelZ))) * RAD_TO_PI;
-        fAccelRoll = atan(fAccelY/(sqrt(fAccelX*fAccelX + fAccelZ*fAccelZ))) * RAD_TO_PI;
-
-
-        fRoll += ((sdRoll - fOffsetGyroX) * RCF);
-        fPitch += ((sdPitch - fOffsetGyroY) * RCF);
-        fYaw += ((sdYaw - fOffsetGyroZ) * RCF);
-
-        printf("Roll%0.fPitch%0.fYaw%0.f\n", fRoll, fPitch, fYaw);
-        // printf("GravityVec%0.4f\n", fAccelGravityVector);
-        // printf("AccelX%0.2fAccelY%0.2fAccelZ%0.2f\n", fAccelX, fAccelY, fAccelZ);
-        printf("Roll%0.fPitch%0.fAccelZ%0.f\n", fAccelRoll, fAccelPitch, fAccelZ);
-
-
-
-
+        mpu6050_read(NULL);
+        printf("Roll=\t%3.2f\n", complimentary_angle.roll);
+        printf("Pitch=\t%3.2f\n", complimentary_angle.pitch);
 
         dac_oneshot_output_voltage(debug_dac_handle, 0); // should always be last
-        //Busy loop to achieve system refresh rate
-        while (esp_timer_get_time() < DBG_DAC_CYCLE_TIME);
+        // Busy loop to achieve system refresh rate
+        while (esp_timer_get_time() < DBG_DAC_CYCLE_TIME)
+            ;
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 void app_main(void)
 {
@@ -244,43 +193,27 @@ void app_main(void)
     debug_print(BOOT_MSG, BOOT_MSG_LEN);
 
     // Initialize sensors
-    if (i2c_new_master_bus(&mcu_master_device_config, &mcu_master_device_handle) != ESP_OK)
+
+    // I2C master bus initialization
+    if (i2c_param_config(i2c_master_bus_port, &i2c_master_bus_config) != ESP_OK)
     {
         // set debugging LEDS
         char *msg = "1000\n\0";
         debug_print(msg, 6);
     }
 
-    if (i2c_master_bus_add_device(mcu_master_device_handle, &mpu6050_config, &mpu6050_handle) != ESP_OK)
+    if (i2c_driver_install(i2c_master_bus_port, I2C_MODE_MASTER, 0, 0, 0) != ESP_OK)
     {
         // set debugging LEDS
-        char *msg = "1001\n\0";
+        char *msg = "1000\n\0";
         debug_print(msg, 6);
     }
 
-    // Initialize mpu6050 sensor internal register configs
-    if (i2c_master_transmit(mpu6050_handle, mpu6050_pmc_reg, 2, pdMS_TO_TICKS(100)) != ESP_OK)
+    // initialize espressif mpu6050 driver
+    mpu6050_init();
+
+    if (xTaskCreatePinnedToCore(flight_controller_loop, "FLIGHT_CONTROLLER", 10000, NULL, 1, NULL, 1) != pdPASS)
     {
-        // wait for 100MS
-        char *msg = "1002\n\0";
-        debug_print(msg, 6);
-    }
-
-    if (i2c_master_transmit(mpu6050_handle, mpu6050_gyro_scale_factor_reg, 2, pdMS_TO_TICKS(100)) != ESP_OK)
-    {
-        // wait for 100MS
-        char *msg = "1003\n\0";
-        debug_print(msg, 6);
-    }
-
-    if (i2c_master_transmit(mpu6050_handle, mpu6050_acce_scale_factor_reg, 2, pdMS_TO_TICKS(100)) != ESP_OK)
-    {
-        // wait for 100MS
-        char *msg = "1004\n\0";
-        debug_print(msg, 6);
-    }
-
-    if (xTaskCreatePinnedToCore(flight_controller_loop, "FLIGHT_CONTROLLER", 10000, NULL, 1, NULL, 1) != pdPASS) {
         char *msg = "2000\n\0";
         debug_print(msg, 6);
     }
