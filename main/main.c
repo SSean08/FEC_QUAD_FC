@@ -71,10 +71,6 @@ static QueueHandle_t uart_queue_handle;
 
 // DAC (for checking frequency)
 
-static dac_oneshot_handle_t debug_dac_handle;
-static const dac_oneshot_config_t debug_dac_config = {
-    .chan_id = DAC_CHAN_0 // GPIO 25
-};
 static uint64_t DBG_DAC_CYCLE_TIME;
 
 // Quadcopter system refresh rate
@@ -110,6 +106,8 @@ static const i2c_device_config_t mpu6050_config = {
     // .scl_wait_us = 0xFFFFF
 };
 static i2c_master_dev_handle_t mpu6050_handle;
+
+
 
 // OFFSETS for sensor readings
 
@@ -227,8 +225,7 @@ void IRAM_ATTR flight_controller_loop(void *pvParameters)
     */
     for (;;)
     {
-        // Set frequency of GPIO 25 to 3.3v, use this to debug SRR of quadcopter
-        dac_oneshot_output_voltage(debug_dac_handle, 255);
+        // Set frequency of GPIO 25 to 3.3v, use this to debug SRR of quadcopter    
 
         // set 4MS delay to match 250Hz
         DBG_DAC_CYCLE_TIME = esp_timer_get_time() + SRR_CYCLE_WIDTH_MICRO;
@@ -290,7 +287,6 @@ void IRAM_ATTR flight_controller_loop(void *pvParameters)
         printf("ROLL%ld,PITCH%ld\r\n", (int32_t)fKalmanAngleRoll, (int32_t)fKalmanAnglePitch);
 
         // Set GPIO voltage to 0v, use this to check SRR of quadcopter.
-        dac_oneshot_output_voltage(debug_dac_handle, 0); // should always be last
         // Busy loop to achieve system refresh rate
         while (esp_timer_get_time() < DBG_DAC_CYCLE_TIME)
             ;
@@ -315,13 +311,6 @@ void app_main(void)
     if (uart_driver_install(uart_debug_port, uart_debug_buffer_size, uart_debug_buffer_size, 10, &uart_queue_handle, 0) != ESP_OK)
     {
         printf("Cannot initialize UART driver for debugging\n");
-    }
-
-    // DAC FREQUENCY CHECKER
-    if (dac_oneshot_new_channel(&debug_dac_config, &debug_dac_handle) != ESP_OK)
-    {
-        char *msg = "1005\n\0";
-        debug_print(msg, 6);
     }
 
     // print boot message
