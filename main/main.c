@@ -24,6 +24,32 @@
 #include <freertos/task.h>
 #include <math.h>
 
+/*
+    Type definitions
+*/
+
+typedef struct {
+    float kalmanAngle;
+    float kalmanError;
+} kalman_struct_1d_t;
+
+typedef struct {
+    float output;
+    float error;
+    float prevError;
+} pid_output_t;
+
+
+typedef struct {
+    int8_t sbRoll;
+    int8_t sbPitch;
+    int8_t sbYaw;
+    int8_t sbThrottle;
+    int8_t sbMode;
+} comm_protocol_structure_t;
+
+
+
 // DEFINE CONSTANTS HERE THAT WILL BE USED THROUGHOUT THE PROGRAM LOGIC CODE
 
 // debug constants and structures
@@ -60,8 +86,8 @@ static const float SRR_CYCLE_WIDTH_SECONDS = (SRR_CYCLE_WIDTH / 1000.0f);
 //
 
 // I2C master device constants and structures
-#define SCL_GPIO (22)
-#define SDATA_GPIO (21)
+#define SCL_GPIO (23)
+#define SDATA_GPIO (22)
 #define MASTER_FREQUENCY (400000)
 #define ESP_I2C_PORT (0)
 
@@ -118,7 +144,10 @@ static float fKalmanAngleRoll = 0.0f;              // Initial guess is 0 because
 static float fKalmanRollAngleUncertainty = 2 * 2;  // Uncertainty of initial angle (since there are no real leveled surface) is 2 degrees
 static float fKalmanAnglePitch = 0.0f;             // Initial guess is 0 because quadcopter will take off at a level surface
 static float fKalmanPitchAngleUncertainty = 2 * 2; // Uncertainty of initial angle (since there are no real leveled surface) is 2 degrees
-static float afKalmanOutput[2] = {0, 0};
+static kalman_struct_1d_t xKalmanOutput = {
+    0.0f,
+    0.0f
+};
 
 static const float fKalmanRotationRateVariance = 4 * 4;  // Real life scenario error of 4 degrees / seconds; variance of rotation rate at the current iteration.
 static const float fKalmanAccelerometerVariance = 3 * 3; // Real life scenario error of 3 degrees; variance of accelerometer at the current iteration.
@@ -126,7 +155,28 @@ static const float fKalmanAccelerometerVariance = 3 * 3; // Real life scenario e
 // UART DEBUGGING constants and structures
 static uart_port_t uart_debugging_port = UART_NUM_0; // directs to standard output
 
+
+
+//Electronic Speed Controller (ESC) related constants
+static const int32_t ESC_LOW_VALUE =    65536;                  // 2^18 * 0.25; 0.25 is the pulse width ratio with a PWM frequency of 250Hz.
+static const int32_t ESC_HIGH_VALUE =   131072;                 // 2^18 * 0.50; 0.50 is the pulse width ratio with a PWM frequency of 250Hz.
+static const int32_t ESC_HIGH_THROTTLE_SAFE_VALUE = 104858;     // ESC_HIGH_VALUE * 0.80, only 80% power of motor will be used to prevent over saturation.
+static const int32_t ESC_ANGULAR_SAFE_VALUE = 131000;           // Rounded off to 131000, this is as a safe value for angular motions like roll, pitch, and yaw.
+
+//PID related constants
+static comm_protocol_structure_t receivedData;
+float fDesiredRollAngle, fDesiredPitchAngle, fDesiredYawAngle;
+float fErrorRollAngle,   fErrorPitchAngle,   fErrorYawAngle;
+float fPIDOutput;
+
+
+
+
+
+
 // FUNCTIONS AND TASKS
+
+
 
 /// @brief The kalman calculation algorithm for the angles combining gyro and accelerometer calculations.
 /// @param fpKalmanOutput       [out] The array (should be of length 2) that will contain the kalman algorithm calculation. First element = Kalman Angle, Second element = Kalman Angle Uncertainty.
@@ -135,21 +185,30 @@ static uart_port_t uart_debugging_port = UART_NUM_0; // directs to standard outp
 /// @param fKalmanInput         [in]  Rate of Gyro at the current iteration.
 /// @param fKalmanMeasurement   [in]  Accelerometer measurement at the current iteration.
 /// @return void
-void IRAM_ATTR kalman_1d_mpu6050(float *fpKalmanOutput, float fKalmanState, float fKalmanUncertainty, float fKalmanInput, float fKalmanMeasurement)
+void IRAM_ATTR kalman_1d_mpu6050(kalman_struct_1d_t *pKalmanOutput, float fKalmanState, float fKalmanUncertainty, float fKalmanInput, float fKalmanMeasurement)
 {
 
     fKalmanState = fKalmanState + (SRR_CYCLE_WIDTH_SECONDS * fKalmanInput);
 
     fKalmanUncertainty = fKalmanUncertainty + (SRR_CYCLE_WIDTH * SRR_CYCLE_WIDTH * fKalmanRotationRateVariance);
 
-    float fKalmanGain = fKalmanUncertainty / (fKalmanUncertainty + fKalmanAccelerometerVariance);
+    float fKalmanGain = fKalmanUncertainty * 1/(1*fKalmanUncertainty + fKalmanAccelerometerVariance);
 
     fKalmanState = fKalmanState + fKalmanGain * (fKalmanMeasurement - fKalmanState);
 
     fKalmanUncertainty = (1 - fKalmanGain) * fKalmanUncertainty;
 
-    fpKalmanOutput[0] = fKalmanState;
-    fpKalmanOutput[1] = fKalmanUncertainty;
+    pKalmanOutput->kalmanAngle = fKalmanState;
+    pKalmanOutput->kalmanError = fKalmanUncertainty;
+}
+
+void IRAM_ATTR PID_controller_function(float fError, float fP, float fI, float fD, float fPrevError, float fPrevIterm)
+{
+    float fPTerm = fP * fError;
+    float fIterm = fPrevIterm + fI*(fError+fPrevError)*SRR_CYCLE_WIDTH_SECONDS/2;
+    if (fIterm > ESC_HI)
+
+
 }
 
 void IRAM_ATTR debug_print(const char *string, size_t len)
@@ -216,20 +275,19 @@ void IRAM_ATTR flight_controller_loop(void *pvParameters)
         // Kalman Filter combining Accelerometer with Gyroscope
 
         // Roll
-        kalman_1d_mpu6050(afKalmanOutput, fKalmanAngleRoll, fKalmanRollAngleUncertainty, ((float)sdRoll / 65.5f) - fOffsetRoll, fAccelRoll);
-        fKalmanAngleRoll = afKalmanOutput[0];
-        fKalmanRollAngleUncertainty = afKalmanOutput[1];
+        kalman_1d_mpu6050(&xKalmanOutput, fKalmanAngleRoll, fKalmanRollAngleUncertainty, ((float)sdRoll / 65.5f) - fOffsetRoll, fAccelRoll);
+        fKalmanAngleRoll = xKalmanOutput.kalmanAngle;
+        fKalmanRollAngleUncertainty = xKalmanOutput.kalmanError;
 
         // Pitch
-        kalman_1d_mpu6050(afKalmanOutput, fKalmanAnglePitch, fKalmanPitchAngleUncertainty, ((float)sdPitch / 65.5f) - fOffsetPitch, fAccelPitch);
-        fKalmanAnglePitch = afKalmanOutput[0];
-        fKalmanPitchAngleUncertainty = afKalmanOutput[1];
+        kalman_1d_mpu6050(&xKalmanOutput, fKalmanAnglePitch, fKalmanPitchAngleUncertainty, ((float)sdPitch / 65.5f) - fOffsetPitch, fAccelPitch);
+        fKalmanAnglePitch = xKalmanOutput.kalmanAngle;
+        fKalmanPitchAngleUncertainty = xKalmanOutput.kalmanError;
 
         // printf("Roll Rate\t%5.5f\n", ((float)sdRoll / 65.5f) - fOffsetRoll);
         // printf("Pitch Rate\t%5.5f\n", ((float)sdPitch / 65.5f) - fOffsetPitch);
 
-        printf("Roll Angle\t%3.2f\n", fKalmanAngleRoll);
-        printf("Pitch Angle\t%3.2f\n", fKalmanAnglePitch);
+        printf("ROLL%ld,PITCH%ld\r\n", (int32_t)fKalmanAngleRoll, (int32_t)fKalmanAnglePitch);
 
         // Set GPIO voltage to 0v, use this to check SRR of quadcopter.
         dac_oneshot_output_voltage(debug_dac_handle, 0); // should always be last
