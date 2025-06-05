@@ -455,13 +455,13 @@ void app_main(void)
         debug_print(msg, 6);
     }
 
-    if (xTaskCreatePinnedToCore(flight_controller_loop, "FLIGHT_CONTROLLER", 10000, NULL, 1, NULL, 1) != pdPASS)
+    if (xTaskCreatePinnedToCore(flight_controller_loop, "FC_TASK", 10000, NULL, 1, NULL, 1) != pdPASS)
     {
         char *msg = "2000\n\0";
         debug_print(msg, 6);
     }
 
-    if (xTaskCreatePinnedToCore(led_gpio_task_loop, "DEBUG_LEDS_PROCESS", 10000, NULL, 1, NULL, 0) != pdPASS)
+    if (xTaskCreatePinnedToCore(led_gpio_task_loop, "DBG_LED_TASK<", 10000, NULL, 1, NULL, 0) != pdPASS)
     {
         char *msg = "2001\n\0";
         debug_print(msg, 6);
