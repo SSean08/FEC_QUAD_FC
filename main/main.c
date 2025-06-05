@@ -225,13 +225,26 @@ void IRAM_ATTR kalman_1d_mpu6050(kalman_struct_1d_t *pKalmanOutput, float fKalma
     pKalmanOutput->kalmanError = fKalmanUncertainty;
 }
 
+/// @brief 
+/// @param fError 
+/// @param fP 
+/// @param fI 
+/// @param fD 
+/// @param fPrevError 
+/// @param fPrevIterm 
+/// @return 
 void IRAM_ATTR PID_controller_function(float fError, float fP, float fI, float fD, float fPrevError, float fPrevIterm)
 {
+
     float fPTerm = fP * fError;
     float fIterm = fPrevIterm + fI * (fError + fPrevError) * SRR_CYCLE_WIDTH_SECONDS / 2;
     // if (fIterm > ESC_HI)
 }
 
+/// @brief Use to output debugging details in the main UART port
+/// @param string the string to be printed, null-terminated.
+/// @param len the length of the string to be printed, include null byte.
+/// @return 
 void IRAM_ATTR debug_print(const char *string, size_t len)
 {
     if (uart_write_bytes(uart_debugging_port, (const void *)string, len) < 0)
@@ -240,6 +253,10 @@ void IRAM_ATTR debug_print(const char *string, size_t len)
     }
 }
 
+/// @brief Use to blink the front debugging leds.
+/// @param count the amount of blinks to do in the led.
+/// @param delayMS the amount of delay in ms before the led turns off.
+/// @return void
 void IRAM_ATTR debug_led_front_blink(int count, int delayMS)
 {
     for (int i = 0; i < count; i++)
@@ -251,6 +268,10 @@ void IRAM_ATTR debug_led_front_blink(int count, int delayMS)
     }
 }
 
+/// @brief Use to blink the back debugging leds.
+/// @param count the amount of blinks to do in the led.
+/// @param delayMS the amount of delay in ms before the led turns off.
+/// @return void
 void IRAM_ATTR debug_led_back_blink(int count, int delayMS)
 {
     for (int i = 0; i < count; i++)
@@ -262,6 +283,9 @@ void IRAM_ATTR debug_led_back_blink(int count, int delayMS)
     }
 }
 
+/// @brief Main gpio task loop that handles all blinking operations of all debugging leds
+/// @param pvParameters 
+/// @return void
 void IRAM_ATTR led_gpio_task_loop(void *pvParameters)
 {
     BaseType_t status;
@@ -288,6 +312,9 @@ void IRAM_ATTR led_gpio_task_loop(void *pvParameters)
     }
 }
 
+/// @brief Main flight controller loop task
+/// @param pvParameters 
+/// @return void
 void IRAM_ATTR flight_controller_loop(void *pvParameters)
 {
     /*
