@@ -13,6 +13,7 @@
     1007:   CANNOT SET DEBUGGING LEDS
     1008:   CANNOT SET DEBUGGING LEDS QUEUE HANDLE
     1009:   CANNOT BLINK DEBUG LEDS
+    1010:   CANNOT CREATE LEDC CHANNELS
     2000:   CANNOT CREATE MAIN LOOP TASK
     2001:   CANNOT CREATE DEBUG LED LOOP TASK
 */
@@ -28,6 +29,7 @@
 #include <freertos/task.h>
 #include <math.h>
 #include "driver/gpio.h"
+#include "driver/ledc.h"
 
 /*
     Type definitions
@@ -126,8 +128,8 @@ static const i2c_device_config_t mpu6050_config = {
 static i2c_master_dev_handle_t mpu6050_handle;
 
 // LED CODE
-static const unsigned long LED_FRONT_BASE = (1UL << 15);
-static const unsigned long LED_BACK_BASE = (1UL << 5);
+static const unsigned long LED_FRONT_BASE = (1ULL << 15);
+static const unsigned long LED_BACK_BASE = (1ULL << 5);
 static const gpio_config_t gpio_led_front_config = {
     .intr_type = GPIO_INTR_DISABLE,
     .mode = GPIO_MODE_OUTPUT,
@@ -188,10 +190,50 @@ static const float fKalmanAccelerometerVariance = 3 * 3; // Real life scenario e
 static uart_port_t uart_debugging_port = UART_NUM_0; // directs to standard output
 
 // Electronic Speed Controller (ESC) related constants
-static const int32_t ESC_LOW_VALUE = 65536;                 // 2^18 * 0.25; 0.25 is the pulse width ratio with a PWM frequency of 250Hz.
-static const int32_t ESC_HIGH_VALUE = 131072;               // 2^18 * 0.50; 0.50 is the pulse width ratio with a PWM frequency of 250Hz.
-static const int32_t ESC_HIGH_THROTTLE_SAFE_VALUE = 104858; // ESC_HIGH_VALUE * 0.80, only 80% power of motor will be used to prevent over saturation.
-static const int32_t ESC_ANGULAR_SAFE_VALUE = 131000;       // Rounded off to 131000, this is as a safe value for angular motions like roll, pitch, and yaw.
+// static const int32_t ESC_LOW_VALUE = 65536;                 // 2^18 * 0.25; 0.25 is the pulse width ratio with a PWM frequency of 250Hz.
+// static const int32_t ESC_HIGH_VALUE = 131072;               // 2^18 * 0.50; 0.50 is the pulse width ratio with a PWM frequency of 250Hz.
+// static const int32_t ESC_HIGH_THROTTLE_SAFE_VALUE = 104858; // ESC_HIGH_VALUE * 0.80, only 80% power of motor will be used to prevent over saturation.
+// static const int32_t ESC_ANGULAR_SAFE_VALUE = 131000;// Rounded off to 131000, this is as a safe value for angular motions like roll, pitch, and yaw.
+
+ledc_timer_config_t motors_main_timer = {
+    .speed_mode = LEDC_LOW_SPEED_MODE,
+    .duty_resolution = LEDC_TIMER_18_BIT, // 18 bits resolution
+    .timer_num = LEDC_TIMER_0,
+    .freq_hz = 250, // 250Hz
+    .clk_cfg = LEDC_AUTO_CLK, // Use the default clock source
+};
+ledc_channel_config_t front_left_motor = {
+    .speed_mode = LEDC_LOW_SPEED_MODE,
+    .channel = LEDC_CHANNEL_0,
+    .timer_sel = LEDC_TIMER_0,
+    .intr_type = LEDC_INTR_DISABLE,
+    .gpio_num = GPIO_NUM_4, // GPIO 25 is used for debugging
+    .duty = 65536, // Initial duty cycle is 0
+};
+ledc_channel_config_t front_right_motor = {
+    .speed_mode = LEDC_LOW_SPEED_MODE,
+    .channel = LEDC_CHANNEL_1,
+    .timer_sel = LEDC_TIMER_0,
+    .intr_type = LEDC_INTR_DISABLE,
+    .gpio_num = GPIO_NUM_18, // GPIO 25 is used for debugging
+    .duty = 65536, // Initial duty cycle is 0
+};
+ledc_channel_config_t rear_left_motor = {
+    .speed_mode = LEDC_LOW_SPEED_MODE,
+    .channel = LEDC_CHANNEL_2,
+    .timer_sel = LEDC_TIMER_0,
+    .intr_type = LEDC_INTR_DISABLE,
+    .gpio_num = GPIO_NUM_19, // GPIO 25 is used for debugging
+    .duty = 65536, // Initial duty cycle is 0
+};
+ledc_channel_config_t rear_right_motor = {
+    .speed_mode = LEDC_LOW_SPEED_MODE,
+    .channel = LEDC_CHANNEL_3,
+    .timer_sel = LEDC_TIMER_0,
+    .intr_type = LEDC_INTR_DISABLE,
+    .gpio_num = GPIO_NUM_21, // GPIO 25 is used for debugging
+    .duty = 65536, // Initial duty cycle is 0
+};
 
 // PID related constants
 static comm_protocol_structure_t receivedData;
@@ -261,9 +303,10 @@ void IRAM_ATTR debug_led_front_blink(int count, int delayMS)
 {
     for (int i = 0; i < count; i++)
     {
-        gpio_set_level(LED_FRONT_BASE, 1);
+        printf("Blinking front LEDS\n");
+        gpio_set_level(GPIO_NUM_15, 1);
         vTaskDelay(pdMS_TO_TICKS(delayMS));
-        gpio_set_level(LED_FRONT_BASE, 0);
+        gpio_set_level(GPIO_NUM_15, 0);
         vTaskDelay(pdMS_TO_TICKS(delayMS));
     }
 }
@@ -276,9 +319,10 @@ void IRAM_ATTR debug_led_back_blink(int count, int delayMS)
 {
     for (int i = 0; i < count; i++)
     {
-        gpio_set_level(LED_BACK_BASE, 1);
+        printf("Blinking back LEDS\n");
+        gpio_set_level(GPIO_NUM_5, 1);
         vTaskDelay(pdMS_TO_TICKS(delayMS));
-        gpio_set_level(LED_BACK_BASE, 0);
+        gpio_set_level(GPIO_NUM_5, 0);
         vTaskDelay(pdMS_TO_TICKS(delayMS));
     }
 }
@@ -382,7 +426,7 @@ void IRAM_ATTR flight_controller_loop(void *pvParameters)
         // printf("Roll Rate\t%5.5f\n", ((float)sdRoll / 65.5f) - fOffsetRoll);
         // printf("Pitch Rate\t%5.5f\n", ((float)sdPitch / 65.5f) - fOffsetPitch);
 
-        printf("ROLL%ld,PITCH%ld\r\n", (int32_t)fKalmanAngleRoll, (int32_t)fKalmanAnglePitch);
+        // printf("ROLL%ld,PITCH%ld\r\n", (int32_t)fKalmanAngleRoll, (int32_t)fKalmanAnglePitch);
 
         // Set GPIO voltage to 0v, use this to check SRR of quadcopter.
         // Busy loop to achieve system refresh rate
@@ -410,6 +454,144 @@ void app_main(void)
     {
         printf("Cannot initialize UART driver for debugging\n");
     }
+
+    //Setup ESC
+    if (ledc_timer_config(&motors_main_timer) != ESP_OK)
+    {
+        printf("Cannot initialize motors main timer\n");
+        char *msg = "1005\n\0";
+        debug_print(msg, 6);
+    }
+
+    if (ledc_channel_config(&front_left_motor) != ESP_OK)
+    {
+        printf("Cannot initialize front left motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_channel_config(&front_right_motor) != ESP_OK)
+    {
+        printf("Cannot initialize front right motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_channel_config(&rear_left_motor) != ESP_OK)
+    {
+        printf("Cannot initialize rear left motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_channel_config(&rear_right_motor) != ESP_OK)
+    {
+        printf("Cannot initialize rear right motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    //Set duty cycle to 13107, which is 5% of the maximum duty cycle of 2^18
+    if (ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 65535) != ESP_OK)
+    {
+        printf("Cannot set duty cycle for front left motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 65535) != ESP_OK)
+    {
+        printf("Cannot set duty cycle for front right motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, 65535) != ESP_OK)
+    {
+        printf("Cannot set duty cycle for rear left motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3, 65535) != ESP_OK)
+    {
+        printf("Cannot set duty cycle for rear right motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    // Start the LEDC channels
+    if (ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0) != ESP_OK)
+    {
+        printf("Cannot update duty cycle for front left motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1) != ESP_OK)
+    {
+        printf("Cannot update duty cycle for front right motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2) != ESP_OK)
+    {
+        printf("Cannot update duty cycle for rear left motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3) != ESP_OK)
+    {
+        printf("Cannot update duty cycle for rear right motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+
+
+    // Sleep for 1 second to allow the motors to initialize
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    if (ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 101908) != ESP_OK)
+    {
+        printf("Cannot set duty cycle for front left motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 101908) != ESP_OK)
+    {
+        printf("Cannot set duty cycle for front right motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, 101908) != ESP_OK)
+    {
+        printf("Cannot set duty cycle for rear left motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3, 101908) != ESP_OK)
+    {
+        printf("Cannot set duty cycle for rear right motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    // Start the LEDC channels
+    if (ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0) != ESP_OK)
+    {
+        printf("Cannot update duty cycle for front left motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1) != ESP_OK)
+    {
+        printf("Cannot update duty cycle for front right motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2) != ESP_OK)
+    {
+        printf("Cannot update duty cycle for rear left motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    if (ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_3) != ESP_OK)
+    {
+        printf("Cannot update duty cycle for rear right motor\n");
+        char *msg = "1010\n\0";
+        debug_print(msg, 6);
+    }
+    
 
     // print boot message
     debug_print(BOOT_MSG, BOOT_MSG_LEN);
@@ -491,6 +673,28 @@ void app_main(void)
     if (xTaskCreatePinnedToCore(led_gpio_task_loop, "DBG_LED_TASK<", 10000, NULL, 1, NULL, 0) != pdPASS)
     {
         char *msg = "2001\n\0";
+        debug_print(msg, 6);
+    }
+
+    debug_led_command_t front_led_command = {
+        .LED = DEBUG_LED_FRONT,
+        .count = 5,
+        .delayMS = 500,
+    };
+    if (xQueueSend(debug_led_queue_handle, &front_led_command, 0) != pdTRUE)
+    {
+        char *msg = "1008\n\0";
+        debug_print(msg, 6);
+    }
+
+    debug_led_command_t back_led_command = {
+        .LED = DEBUG_LED_BACK,
+        .count = 5,
+        .delayMS = 500,
+    };
+    if (xQueueSend(debug_led_queue_handle, &back_led_command, 0) != pdTRUE)
+    {
+        char *msg = "1008\n\0";
         debug_print(msg, 6);
     }
 }
